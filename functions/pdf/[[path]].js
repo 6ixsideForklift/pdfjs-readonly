@@ -15,6 +15,8 @@ export async function onRequest(context) {
   // Forward Range requests for PDF.js seeking
   const headers = new Headers(request.headers);
   headers.delete("cookie");
+
+  // internal bypass for Pages -> Worker
   headers.set("x-pages-token", env.PAGES_INTERNAL_TOKEN || "");
 
   const upstream = await fetch(target, {
@@ -23,6 +25,9 @@ export async function onRequest(context) {
   });
 
   const respHeaders = new Headers(upstream.headers);
+
+  // Prevent browser basic-auth login prompt
+  respHeaders.delete("www-authenticate");
 
   // No caching ever
   respHeaders.set("Cache-Control", "no-store, private, max-age=0");
