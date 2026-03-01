@@ -1,44 +1,37 @@
 export async function onRequest(context) {
-  const { request, params, env } = context;
+  const { request, env, params } = context;
 
-  // The path after /pdf/
-  const tail = Array.isArray(params.path) ? params.path.join("/") : (params.path || "");
-  if (!tail) {
-    return new Response("Missing PDF path", { status: 400 });
-  }
+  // params.path is an array of path segments after /pdf/
+  const tail = Array.isArray(params.path) ? params.path.join("/") : "";
+  if (!tail) return new Response("Missing PDF path", { status: 400 });
 
-  // IMPORTANT: this should be your Caddy domain (behind your tunnel)
-  // Example: https://manuals.6ixsideforklift.ca/Service%20Manuals/.../file.pdf
-  const upstreamUrl = new URL("https://manuals.6ixsideforklift.ca/" + tail);
+  // Preserve querystring (?t=...)
+  const url = new URL(request.url);
+  const qs = url.search || "";
 
-  // Forward Range so PDF.js can stream/seek
-  const headers = new Headers();
-  const range = request.headers.get("Range");
-  if (range) headers.set("Range", range);
+  const gateBase = (env.GATEKEEPER_BASE || "https://thegatekeeper.6ixsideforklift.workers.dev").replace(/\/+$/, "");
+  const target = `${gateBase}/pdf/${tail}${qs}`;
 
-  // Add Basic Auth to upstream (browser never sees this)
-  // Set these as Pages environment variables
-  const user = env.CADDY_USER;
-  const pass = env.CADDY_PASS;
-  if (!user || !pass) {
-    return new Response("Missing CADDY_USER/CADDY_PASS env vars", { status: 500 });
-  }
-  const token = btoa(`${user}:${pass}`);
-  headers.set("Authorization", `Basic ${token}`);
+  // Forward Range requests for PDF.js seeking
+  const headers = new Headers(request.headers);
+  headers.delete("cookie");
+  headers.set("x-pages-token", env.PAGES_INTERNAL_TOKEN || "");
 
-  // Fetch upstream PDF
-  const resp = await fetch(upstreamUrl.toString(), {
-    method: "GET",
+  const upstream = await fetch(target, {
+    method: request.method,
     headers,
   });
 
-  // Pass through status + key headers PDF.js cares about
-  const outHeaders = new Headers(resp.headers);
-  outHeaders.set("Access-Control-Allow-Origin", "*"); // same-origin anyway, harmless
-  outHeaders.set("Cache-Control", "no-store");
+  const respHeaders = new Headers(upstream.headers);
 
-  return new Response(resp.body, {
-    status: resp.status,
-    headers: outHeaders,
+  // No caching ever
+  respHeaders.set("Cache-Control", "no-store, private, max-age=0");
+  respHeaders.set("Pragma", "no-cache");
+  respHeaders.set("Expires", "0");
+  respHeaders.set("X-Content-Type-Options", "nosniff");
+
+  return new Response(upstream.body, {
+    status: upstream.status,
+    headers: respHeaders,
   });
 }
